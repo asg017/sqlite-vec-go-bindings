@@ -7,13 +7,25 @@
 package embed
 
 import (
+	"bytes"
 	_ "embed"
+	"encoding/binary"
+
 	"github.com/ncruces/go-sqlite3"
 )
 
 //go:embed sqlite3.wasm
-var binary []byte
+var wasmBinary []byte
 
 func init() {
-	sqlite3.Binary = binary
+	sqlite3.Binary = wasmBinary
+}
+
+func SerializeFloat32(vector []float32) ([]byte, error) {
+	buf := new(bytes.Buffer)
+	err := binary.Write(buf, binary.LittleEndian, vector)
+	if err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
