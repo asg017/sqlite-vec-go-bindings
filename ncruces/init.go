@@ -3,7 +3,7 @@
 // Importing package embed initializes the [sqlite3.Binary] variable
 // with an appropriate build of SQLite:
 //
-//	import _ "github.com/asg017/sqlite-vec-ncruces-bindings"
+//	import _ "github.com/asg017/sqlite-vec-go-bindings/ncruces"
 package embed
 
 import (
