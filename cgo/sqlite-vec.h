@@ -3,9 +3,9 @@
 
 #include "sqlite3ext.h"
 
-#define SQLITE_VEC_VERSION "v0.0.1-alpha.35"
-#define SQLITE_VEC_DATE "2024-07-17T06:02:51Z+0000"
-#define SQLITE_VEC_SOURCE "209a6ed447d443655b49a562ce6fbcca60a2718c"
+#define SQLITE_VEC_VERSION "v0.0.1-alpha.36"
+#define SQLITE_VEC_DATE "2024-07-17T06:06:56Z+0000"
+#define SQLITE_VEC_SOURCE "e507bc0230de6dc44c7ff3b4895785edd734f31d"
 
 #ifdef __cplusplus
 extern "C" {
