@@ -230,6 +230,100 @@ static f32 l2_sqr_int8_neon(const void *pVect1v, const void *pVect2v,
 
   return sqrtf(sum_scalar);
 }
+
+static i32 l1_int8_neon(const void *pVect1v, const void *pVect2v,
+                        const void *qty_ptr) {
+  i8 *pVect1 = (i8 *)pVect1v;
+  i8 *pVect2 = (i8 *)pVect2v;
+  size_t qty = *((size_t *)qty_ptr);
+
+  const int8_t *pEnd1 = pVect1 + qty;
+
+  int32x4_t acc1 = vdupq_n_s32(0);
+  int32x4_t acc2 = vdupq_n_s32(0);
+  int32x4_t acc3 = vdupq_n_s32(0);
+  int32x4_t acc4 = vdupq_n_s32(0);
+
+  while (pVect1 < pEnd1 - 63) {
+    int8x16_t v1 = vld1q_s8(pVect1);
+    int8x16_t v2 = vld1q_s8(pVect2);
+    int8x16_t diff1 = vabdq_s8(v1, v2);
+    acc1 = vaddq_s32(acc1, vpaddlq_u16(vpaddlq_u8(diff1)));
+
+    v1 = vld1q_s8(pVect1 + 16);
+    v2 = vld1q_s8(pVect2 + 16);
+    int8x16_t diff2 = vabdq_s8(v1, v2);
+    acc2 = vaddq_s32(acc2, vpaddlq_u16(vpaddlq_u8(diff2)));
+
+    v1 = vld1q_s8(pVect1 + 32);
+    v2 = vld1q_s8(pVect2 + 32);
+    int8x16_t diff3 = vabdq_s8(v1, v2);
+    acc3 = vaddq_s32(acc3, vpaddlq_u16(vpaddlq_u8(diff3)));
+
+    v1 = vld1q_s8(pVect1 + 48);
+    v2 = vld1q_s8(pVect2 + 48);
+    int8x16_t diff4 = vabdq_s8(v1, v2);
+    acc4 = vaddq_s32(acc4, vpaddlq_u16(vpaddlq_u8(diff4)));
+
+    pVect1 += 64;
+    pVect2 += 64;
+  }
+
+  while (pVect1 < pEnd1 - 15) {
+    int8x16_t v1 = vld1q_s8(pVect1);
+    int8x16_t v2 = vld1q_s8(pVect2);
+    int8x16_t diff = vabdq_s8(v1, v2);
+    acc1 = vaddq_s32(acc1, vpaddlq_u16(vpaddlq_u8(diff)));
+    pVect1 += 16;
+    pVect2 += 16;
+  }
+
+  int32x4_t acc = vaddq_s32(vaddq_s32(acc1, acc2), vaddq_s32(acc3, acc4));
+
+  int32_t sum = 0;
+  while (pVect1 < pEnd1) {
+    int32_t diff = abs((int32_t)*pVect1 - (int32_t)*pVect2);
+    sum += diff;
+    pVect1++;
+    pVect2++;
+  }
+
+  return vaddvq_s32(acc) + sum;
+}
+
+static double l1_f32_neon(const void *pVect1v, const void *pVect2v,
+                          const void *qty_ptr) {
+  f32 *pVect1 = (f32 *)pVect1v;
+  f32 *pVect2 = (f32 *)pVect2v;
+  size_t qty = *((size_t *)qty_ptr);
+
+  const f32 *pEnd1 = pVect1 + qty;
+  float64x2_t acc = vdupq_n_f64(0);
+
+  while (pVect1 < pEnd1 - 3) {
+    float32x4_t v1 = vld1q_f32(pVect1);
+    float32x4_t v2 = vld1q_f32(pVect2);
+    pVect1 += 4;
+    pVect2 += 4;
+
+    // f32x4 -> f64x2 pad for overflow
+    float64x2_t low_diff = vabdq_f64(vcvt_f64_f32(vget_low_f32(v1)),
+                                     vcvt_f64_f32(vget_low_f32(v2)));
+    float64x2_t high_diff =
+        vabdq_f64(vcvt_high_f64_f32(v1), vcvt_high_f64_f32(v2));
+
+    acc = vaddq_f64(acc, vaddq_f64(low_diff, high_diff));
+  }
+
+  double sum = 0;
+  while (pVect1 < pEnd1) {
+    sum += fabs((double)*pVect1 - (double)*pVect2);
+    pVect1++;
+    pVect2++;
+  }
+
+  return vaddvq_f64(acc) + sum;
+}
 #endif
 
 static f32 l2_sqr_float(const void *pVect1v, const void *pVect2v,
@@ -284,6 +378,54 @@ static f32 distance_l2_sqr_int8(const void *a, const void *b, const void *d) {
   }
 #endif
   return l2_sqr_int8(a, b, d);
+}
+
+static i32 l1_int8(const void *pA, const void *pB, const void *pD) {
+  i8 *a = (i8 *)pA;
+  i8 *b = (i8 *)pB;
+  size_t d = *((size_t *)pD);
+
+  i32 res = 0;
+  for (size_t i = 0; i < d; i++) {
+    res += abs(*a - *b);
+    a++;
+    b++;
+  }
+
+  return res;
+}
+
+static i32 distance_l1_int8(const void *a, const void *b, const void *d) {
+#ifdef SQLITE_VEC_ENABLE_NEON
+  if ((*(const size_t *)d) > 15) {
+    return l1_int8_neon(a, b, d);
+  }
+#endif
+  return l1_int8(a, b, d);
+}
+
+static double l1_f32(const void *pA, const void *pB, const void *pD) {
+  f32 *a = (f32 *)pA;
+  f32 *b = (f32 *)pB;
+  size_t d = *((size_t *)pD);
+
+  double res = 0;
+  for (size_t i = 0; i < d; i++) {
+    res += fabs((double)*a - (double)*b);
+    a++;
+    b++;
+  }
+
+  return res;
+}
+
+static double distance_l1_f32(const void *a, const void *b, const void *d) {
+#ifdef SQLITE_VEC_ENABLE_NEON
+  if ((*(const size_t *)d) > 3) {
+    return l1_f32_neon(a, b, d);
+  }
+#endif
+  return l1_f32(a, b, d);
 }
 
 static f32 distance_cosine_float(const void *pVect1v, const void *pVect2v,
@@ -1040,6 +1182,48 @@ finish:
   bCleanup(b);
   return;
 }
+
+static void vec_distance_l1(sqlite3_context *context, int argc,
+                            sqlite3_value **argv) {
+  assert(argc == 2);
+  int rc;
+  void *a, *b;
+  size_t dimensions;
+  vector_cleanup aCleanup, bCleanup;
+  char *error;
+  enum VectorElementType elementType;
+  rc = ensure_vector_match(argv[0], argv[1], &a, &b, &elementType, &dimensions,
+                           &aCleanup, &bCleanup, &error);
+  if (rc != SQLITE_OK) {
+    sqlite3_result_error(context, error, -1);
+    sqlite3_free(error);
+    return;
+  }
+
+  switch (elementType) {
+  case SQLITE_VEC_ELEMENT_TYPE_BIT: {
+    sqlite3_result_error(
+        context, "Cannot calculate L1 distance between two bitvectors.", -1);
+    goto finish;
+  }
+  case SQLITE_VEC_ELEMENT_TYPE_FLOAT32: {
+    double result = distance_l1_f32(a, b, &dimensions);
+    sqlite3_result_double(context, result);
+    goto finish;
+  }
+  case SQLITE_VEC_ELEMENT_TYPE_INT8: {
+    i64 result = distance_l1_int8(a, b, &dimensions);
+    sqlite3_result_int(context, result);
+    goto finish;
+  }
+  }
+
+finish:
+  aCleanup(a);
+  bCleanup(b);
+  return;
+}
+
 static void vec_distance_hamming(sqlite3_context *context, int argc,
                                  sqlite3_value **argv) {
   assert(argc == 2);
@@ -1082,8 +1266,105 @@ finish:
   return;
 }
 
-static void vec_quantize_i8(sqlite3_context *context, int argc,
+char * vec_type_name(enum VectorElementType elementType) {
+  switch(elementType) {
+    case SQLITE_VEC_ELEMENT_TYPE_FLOAT32:
+      return "float32";
+    case SQLITE_VEC_ELEMENT_TYPE_INT8:
+      return "int8";
+    case SQLITE_VEC_ELEMENT_TYPE_BIT:
+      return "bit";
+  }
+}
+
+static void vec_type(sqlite3_context *context, int argc,
+                                sqlite3_value **argv) {
+  assert(argc == 1);
+  void *vector;
+  size_t dimensions;
+  vector_cleanup cleanup;
+  char *pzError;
+  enum VectorElementType elementType;
+  int rc = vector_from_value(argv[0], &vector, &dimensions, &elementType,
+                             &cleanup, &pzError);
+  if (rc != SQLITE_OK) {
+    sqlite3_result_error(context, pzError, -1);
+    sqlite3_free(pzError);
+    return;
+  }
+  sqlite3_result_text(context, vec_type_name(elementType), -1, SQLITE_STATIC);
+  cleanup(vector);
+
+}
+static void vec_quantize_binary(sqlite3_context *context, int argc,
+                                sqlite3_value **argv) {
+  assert(argc == 1);
+  void *vector;
+  size_t dimensions;
+  vector_cleanup vectorCleanup;
+  char *pzError;
+  enum VectorElementType elementType;
+  int rc = vector_from_value(argv[0], &vector, &dimensions, &elementType,
+                             &vectorCleanup, &pzError);
+  if (rc != SQLITE_OK) {
+    sqlite3_result_error(context, pzError, -1);
+    sqlite3_free(pzError);
+    return;
+  }
+
+  if(dimensions <= 0) {
+    sqlite3_result_error(context, "Zero length vectors are not supported.", -1);
+    goto cleanup;
+    return;
+  }
+  if((dimensions % CHAR_BIT) != 0) {
+    sqlite3_result_error(context, "Binary quantization requires vectors with a length divisible by 8", -1);
+    goto cleanup;
+    return;
+  }
+
+  int sz = dimensions / CHAR_BIT;
+  u8 *out = sqlite3_malloc(sz);
+  if (!out) {
+    sqlite3_result_error_code(context, SQLITE_NOMEM);
+    goto cleanup;
+    return;
+  }
+  memset(out, 0, sz);
+
+  switch(elementType) {
+    case SQLITE_VEC_ELEMENT_TYPE_FLOAT32: {
+
+      for (size_t i = 0; i < dimensions; i++) {
+        int res = ((f32 *)vector)[i] > 0.0;
+        out[i / 8] |= (res << (i % 8));
+      }
+      break;
+    }
+    case SQLITE_VEC_ELEMENT_TYPE_INT8: {
+      for (size_t i = 0; i < dimensions; i++) {
+        int res = ((i8 *)vector)[i] > 0;
+        out[i / 8] |= (res << (i % 8));
+      }
+      break;
+    }
+    case SQLITE_VEC_ELEMENT_TYPE_BIT: {
+      sqlite3_result_error(context, "Can only binary quantize float or int8 vectors", -1);
+      sqlite3_free(out);
+      return;
+    }
+  }
+  sqlite3_result_blob(context, out, sz, sqlite3_free);
+  sqlite3_result_subtype(context, SQLITE_VEC_ELEMENT_TYPE_BIT);
+
+
+  cleanup:
+    vectorCleanup(vector);
+}
+
+static void vec_quantize_int8(sqlite3_context *context, int argc,
                             sqlite3_value **argv) {
+  assert(argc == 2);
   f32 *srcVector;
   size_t dimensions;
   fvec_cleanup srcCleanup;
@@ -1099,38 +1380,22 @@ static void vec_quantize_i8(sqlite3_context *context, int argc,
   int sz = dimensions * sizeof(i8);
   out = sqlite3_malloc(sz);
   if (!out) {
-    rc = SQLITE_NOMEM;
+    sqlite3_result_error_nomem(context);
     goto cleanup;
   }
   memset(out, 0, sz);
 
-  if (argc == 2) {
-    if ((sqlite3_value_type(argv[1]) != SQLITE_TEXT) ||
-        (sqlite3_value_bytes(argv[1]) != strlen("unit")) ||
-        (sqlite3_stricmp((const char *)sqlite3_value_text(argv[1]), "unit") !=
-         0)) {
-      sqlite3_result_error(context,
-                           "2nd argument to vec_quantize_i8() must be 'unit', "
-                           "or ranges must be provided.",
-                           -1);
-      sqlite3_free(out);
-      goto cleanup;
-    }
-    f32 step = (1.0 - (-1.0)) / 255;
-    for (size_t i = 0; i < dimensions; i++) {
-      out[i] = ((srcVector[i] - (-1.0)) / step) - 128;
-    }
-  } else if (argc == 3) {
-    // f32 * minVector, maxVector;
-    // size_t d;
-    // fvec_cleanup minCleanup, maxCleanup;
-    // int rc = fvec_from_value(argv[1], )
-
+  if ((sqlite3_value_type(argv[1]) != SQLITE_TEXT) ||
+      (sqlite3_value_bytes(argv[1]) != strlen("unit")) ||
+      (sqlite3_stricmp((const char *)sqlite3_value_text(argv[1]), "unit") !=
+        0)) {
+    sqlite3_result_error(context, "2nd argument to vec_quantize_i8() must be 'unit'.", -1);
     sqlite3_free(out);
-    // TODO
-    sqlite3_result_error(
-        context, "ranges parameter not supported in vec_quantize_i8 yet.", -1);
     goto cleanup;
+  }
+  f32 step = (1.0 - (-1.0)) / 255;
+  for (size_t i = 0; i < dimensions; i++) {
+    out[i] = ((srcVector[i] - (-1.0)) / step) - 128;
   }
 
   sqlite3_result_blob(context, out, dimensions * sizeof(i8), sqlite3_free);
@@ -1140,58 +1405,6 @@ cleanup:
   srcCleanup(srcVector);
 }
 
-static void vec_quantize_binary(sqlite3_context *context, int argc,
-                                sqlite3_value **argv) {
-  assert(argc == 1);
-  void *vector;
-  size_t dimensions;
-  vector_cleanup cleanup;
-  char *pzError;
-  enum VectorElementType elementType;
-  int rc = vector_from_value(argv[0], &vector, &dimensions, &elementType,
-                             &cleanup, &pzError);
-  if (rc != SQLITE_OK) {
-    sqlite3_result_error(context, pzError, -1);
-    sqlite3_free(pzError);
-    return;
-  }
-
-  if (elementType == SQLITE_VEC_ELEMENT_TYPE_FLOAT32) {
-    int sz = dimensions / CHAR_BIT;
-    u8 *out = sqlite3_malloc(sz);
-    if (!out) {
-      cleanup(vector);
-      sqlite3_result_error_code(context, SQLITE_NOMEM);
-      return;
-    }
-    memset(out, 0, sz);
-    for (size_t i = 0; i < dimensions; i++) {
-      int res = ((f32 *)vector)[i] > 0.0;
-      out[i / 8] |= (res << (i % 8));
-    }
-    sqlite3_result_blob(context, out, dimensions / CHAR_BIT, sqlite3_free);
-    sqlite3_result_subtype(context, SQLITE_VEC_ELEMENT_TYPE_BIT);
-  } else if (elementType == SQLITE_VEC_ELEMENT_TYPE_INT8) {
-    int sz = dimensions / CHAR_BIT;
-    u8 *out = sqlite3_malloc(sz);
-    if (!out) {
-      cleanup(vector);
-      sqlite3_result_error_code(context, SQLITE_NOMEM);
-      return;
-    }
-    memset(out, 0, sz);
-    for (size_t i = 0; i < dimensions; i++) {
-      int res = ((i8 *)vector)[i] > 0;
-      out[i / 8] |= (res << (i % 8));
-    }
-    sqlite3_result_blob(context, out, dimensions / CHAR_BIT, sqlite3_free);
-    sqlite3_result_subtype(context, SQLITE_VEC_ELEMENT_TYPE_BIT);
-  } else {
-    sqlite3_result_error(context,
-                         "Can only binary quantize float or int8 vectors", -1);
-    return;
-  }
-}
 
 static void vec_add(sqlite3_context *context, int argc, sqlite3_value **argv) {
   assert(argc == 2);
@@ -1751,6 +1964,7 @@ int parse_primary_key_definition(const char *source, int source_length,
 enum Vec0DistanceMetrics {
   VEC0_DISTANCE_METRIC_L2 = 1,
   VEC0_DISTANCE_METRIC_COSINE = 2,
+  VEC0_DISTANCE_METRIC_L1 = 3,
 };
 
 struct VectorColumnDefinition {
@@ -1895,6 +2109,8 @@ int parse_vector_column(const char *source, int source_length,
       int valueLength = token.end - token.start;
       if (sqlite3_strnicmp(value, "l2", valueLength) == 0) {
         distanceMetric = VEC0_DISTANCE_METRIC_L2;
+      }else if (sqlite3_strnicmp(value, "l1", valueLength) == 0) {
+        distanceMetric = VEC0_DISTANCE_METRIC_L1;
       } else if (sqlite3_strnicmp(value, "cosine", valueLength) == 0) {
         distanceMetric = VEC0_DISTANCE_METRIC_COSINE;
       } else {
@@ -2608,9 +2824,9 @@ static int vec_npy_eachOpen(sqlite3_vtab *p, sqlite3_vtab_cursor **ppCursor) {
 static int vec_npy_eachClose(sqlite3_vtab_cursor *cur) {
   vec_npy_each_cursor *pCur = (vec_npy_each_cursor *)cur;
   if (pCur->file) {
-    #ifndef SQLITE_VEC_OMIT_FS
+#ifndef SQLITE_VEC_OMIT_FS
     fclose(pCur->file);
-    #endif
+#endif
     pCur->file = NULL;
   }
   if (pCur->chunksBuffer) {
@@ -2664,9 +2880,9 @@ static int vec_npy_eachFilter(sqlite3_vtab_cursor *pVtabCursor, int idxNum,
   vec_npy_each_cursor *pCur = (vec_npy_each_cursor *)pVtabCursor;
 
   if (pCur->file) {
-    #ifndef SQLITE_VEC_OMIT_FS
+#ifndef SQLITE_VEC_OMIT_FS
     fclose(pCur->file);
-    #endif
+#endif
     pCur->file = NULL;
   }
   if (pCur->chunksBuffer) {
@@ -2679,7 +2895,7 @@ static int vec_npy_eachFilter(sqlite3_vtab_cursor *pVtabCursor, int idxNum,
 
   struct VecNpyFile *f = NULL;
 
-  #ifndef SQLITE_VEC_OMIT_FS
+#ifndef SQLITE_VEC_OMIT_FS
   if ((f = sqlite3_value_pointer(argv[0], SQLITE_VEC_NPY_FILE_NAME))) {
     FILE *file = fopen(f->path, "r");
     if (!file) {
@@ -2689,15 +2905,15 @@ static int vec_npy_eachFilter(sqlite3_vtab_cursor *pVtabCursor, int idxNum,
 
     rc = parse_npy_file(pVtabCursor->pVtab, file, pCur);
     if (rc != SQLITE_OK) {
-      #ifndef SQLITE_VEC_OMIT_FS
+#ifndef SQLITE_VEC_OMIT_FS
       fclose(file);
-      #endif
+#endif
       return rc;
     }
 
   } else
-  #endif
-   {
+#endif
+  {
 
     const unsigned char *input = sqlite3_value_blob(argv[0]);
     int inputLength = sqlite3_value_bytes(argv[0]);
@@ -2744,7 +2960,7 @@ static int vec_npy_eachNext(sqlite3_vtab_cursor *cur) {
     return SQLITE_OK;
   }
 
-  #ifndef SQLITE_VEC_OMIT_FS
+#ifndef SQLITE_VEC_OMIT_FS
   // else: input is a file
   pCur->currentChunkIndex++;
   if (pCur->currentChunkIndex >= pCur->currentChunkSize) {
@@ -2757,7 +2973,7 @@ static int vec_npy_eachNext(sqlite3_vtab_cursor *cur) {
     }
     pCur->currentChunkIndex = 0;
   }
-  #endif
+#endif
   return SQLITE_OK;
 }
 
@@ -2778,7 +2994,7 @@ static int vec_npy_eachColumnBuffer(vec_npy_each_cursor *pCur,
     }
     case SQLITE_VEC_ELEMENT_TYPE_INT8:
     case SQLITE_VEC_ELEMENT_TYPE_BIT: {
-      // TODO
+      // https://github.com/asg017/sqlite-vec/issues/42
       sqlite3_result_error(context,
                            "vec_npy_each only supports float32 vectors", -1);
       break;
@@ -2806,7 +3022,7 @@ static int vec_npy_eachColumnFile(vec_npy_each_cursor *pCur,
     }
     case SQLITE_VEC_ELEMENT_TYPE_INT8:
     case SQLITE_VEC_ELEMENT_TYPE_BIT: {
-      // TODO
+      // https://github.com/asg017/sqlite-vec/issues/42
       sqlite3_result_error(context,
                            "vec_npy_each only supports float32 vectors", -1);
       break;
@@ -3008,29 +3224,9 @@ struct vec0_vtab {
    * Must be cleaned up with sqlite3_finalize().
    */
   sqlite3_stmt *stmtRowidsGetChunkPosition;
-
-  /**
-   * Cached SQLite BLOBs for every possible vector column for the table.
-   * Defined for all vectors up to index numVectorColumns (always <=
-   * VEC0_MAX_VECTOR_COLUMNS).
-   *
-   * Defined from:
-   *  db: p->schemaName
-   *  table: p->shadowVectorChunksNames[i]
-   *  column: "vectors"
-   *
-   * Opened at vec0_init() time.
-   * Must be cleaned up with sqlite3_blob_close() at xDisconnect.
-   *
-   */
-  sqlite3_blob *vectorBlobs[VEC0_MAX_VECTOR_COLUMNS];
 };
 
 void vec0_free_resources(vec0_vtab *p) {
-  for (int i = 0; i < p->numVectorColumns; i++) {
-    sqlite3_blob_close(p->vectorBlobs[i]);
-    p->vectorBlobs[i] = NULL;
-  }
   sqlite3_finalize(p->stmtLatestChunk);
   p->stmtLatestChunk = NULL;
   sqlite3_finalize(p->stmtRowidsInsertRowid);
@@ -3091,6 +3287,62 @@ int vec0_column_idx_to_vector_idx(vec0_vtab *pVtab, int column_idx) {
   return column_idx - VEC0_COLUMN_VECTORN_START;
 }
 
+int vec0_get_chunk_position(vec0_vtab * p, i64 rowid, sqlite3_value ** id, i64 *chunk_id, i64 * chunk_offset) {
+  int rc;
+
+  if(!p->stmtRowidsGetChunkPosition) {
+    const char * zSql = sqlite3_mprintf("SELECT id, chunk_id, chunk_offset "
+                           "FROM " VEC0_SHADOW_ROWIDS_NAME " WHERE rowid = ?",
+                           p->schemaName, p->tableName);
+    if (!zSql) {
+      rc = SQLITE_NOMEM;
+      goto cleanup;
+    }
+    rc = sqlite3_prepare_v2(p->db, zSql, -1, &p->stmtRowidsGetChunkPosition, 0);
+    sqlite3_free((void *)zSql);
+    if (rc != SQLITE_OK) {
+      vtab_set_error(&p->base,
+          VEC_INTERAL_ERROR
+          "could not initialize 'rowids get chunk position' statement");
+      goto cleanup;
+    }
+  }
+
+  sqlite3_bind_int64(p->stmtRowidsGetChunkPosition, 1, rowid);
+  rc = sqlite3_step(p->stmtRowidsGetChunkPosition);
+  // special case: when no results, return SQLITE_EMPTY to convene "that chunk position doesnt exist"
+  if(rc == SQLITE_DONE) {
+    rc = SQLITE_EMPTY;
+    goto cleanup;
+  }
+  if (rc != SQLITE_ROW) {
+    goto cleanup;
+  }
+
+  if(id) {
+    sqlite3_value *value = sqlite3_column_value(p->stmtRowidsGetChunkPosition, 0);
+    *id = sqlite3_value_dup(value);
+    if(!*id) {
+      rc = SQLITE_NOMEM;
+      goto cleanup;
+    }
+  }
+
+  if(chunk_id) {
+    *chunk_id = sqlite3_column_int64(p->stmtRowidsGetChunkPosition, 1);
+  }
+  if(chunk_offset) {
+    *chunk_offset = sqlite3_column_int64(p->stmtRowidsGetChunkPosition, 2);
+  }
+
+  rc = SQLITE_OK;
+
+  cleanup:
+    sqlite3_reset(p->stmtRowidsGetChunkPosition);
+    sqlite3_clear_bindings(p->stmtRowidsGetChunkPosition);
+    return rc;
+}
+
 /**
  * @brief Return the id value from the _rowids table where _rowids.rowid =
  * rowid.
@@ -3103,23 +3355,9 @@ int vec0_column_idx_to_vector_idx(vec0_vtab *pVtab, int column_idx) {
  */
 int vec0_get_id_value_from_rowid(vec0_vtab *pVtab, i64 rowid,
                                  sqlite3_value **out) {
-  int rc;
-  // PERF: different stmt than stmtRowidsGetChunkPosition?
+  // PERF: different strategy than get_chunk_position?
   // TODO: test / evidence-of
-  sqlite3_bind_int64(pVtab->stmtRowidsGetChunkPosition, 1, rowid);
-  rc = sqlite3_step(pVtab->stmtRowidsGetChunkPosition);
-  if (rc != SQLITE_ROW) {
-    goto cleanup;
-  }
-  sqlite3_value *value =
-      sqlite3_column_value(pVtab->stmtRowidsGetChunkPosition, 0);
-  *out = sqlite3_value_dup(value);
-  rc = SQLITE_OK;
-
-cleanup:
-  sqlite3_reset(pVtab->stmtRowidsGetChunkPosition);
-  sqlite3_clear_bindings(pVtab->stmtRowidsGetChunkPosition);
-  return rc;
+  return vec0_get_chunk_position( (vec0_vtab *) pVtab, rowid, out, NULL, NULL);
 }
 
 int vec0_rowid_from_id(vec0_vtab *p, sqlite3_value *valueId, i64 *rowid) {
@@ -3193,36 +3431,35 @@ int vec0_result_id(vec0_vtab *p, sqlite3_context *context, i64 rowid) {
  */
 int vec0_get_vector_data(vec0_vtab *pVtab, i64 rowid, int vector_column_idx,
                          void **outVector, int *outVectorSize) {
+  vec0_vtab *p = pVtab;
   int rc;
   i64 chunk_id;
   i64 chunk_offset;
   size_t size;
   void *buf = NULL;
   int blobOffset;
+  sqlite3_blob * vectorBlob = NULL;
   assert((vector_column_idx >= 0) &&
          (vector_column_idx < pVtab->numVectorColumns));
 
-  sqlite3_bind_int64(pVtab->stmtRowidsGetChunkPosition, 1, rowid);
-  rc = sqlite3_step(pVtab->stmtRowidsGetChunkPosition);
-  if (rc == SQLITE_DONE) {
-    // TODO error message on callers
-    rc = SQLITE_EMPTY;
+  rc = vec0_get_chunk_position(pVtab, rowid, NULL, &chunk_id, &chunk_offset);
+  if(rc == SQLITE_EMPTY) {
+    vtab_set_error(&pVtab->base, "Could not find a row with rowid %lld", rowid);
     goto cleanup;
   }
-  if (rc != SQLITE_ROW) {
-    vtab_set_error(&pVtab->base, "Could not find a row with id %lld", rowid);
-    rc = SQLITE_ERROR;
+  if(rc != SQLITE_OK) {
     goto cleanup;
   }
 
-  chunk_id = sqlite3_column_int64(pVtab->stmtRowidsGetChunkPosition, 1);
-  chunk_offset = sqlite3_column_int64(pVtab->stmtRowidsGetChunkPosition, 2);
+  rc = sqlite3_blob_open(p->db, p->schemaName,
+                           p->shadowVectorChunksNames[vector_column_idx], "vectors", chunk_id, 0,
+                           &vectorBlob);
 
-  rc = sqlite3_blob_reopen(pVtab->vectorBlobs[vector_column_idx], chunk_id);
   if (rc != SQLITE_OK) {
+    // TODO evidence-of
     vtab_set_error(
         &pVtab->base,
-        "Could not fetch vector data for %lld, reopening blob failed", rowid);
+        "Could not fetch vector data for %lld, opening blob failed", rowid);
     rc = SQLITE_ERROR;
     goto cleanup;
   }
@@ -3232,12 +3469,11 @@ int vec0_get_vector_data(vec0_vtab *pVtab, i64 rowid, int vector_column_idx,
 
   buf = sqlite3_malloc(size);
   if (!buf) {
-    rc = SQLITE_ERROR;
+    rc = SQLITE_NOMEM;
     goto cleanup;
   }
 
-  rc = sqlite3_blob_read(pVtab->vectorBlobs[vector_column_idx], buf, size,
-                         blobOffset);
+  rc = sqlite3_blob_read(vectorBlob, buf, size, blobOffset);
   if (rc != SQLITE_OK) {
     sqlite3_free(buf);
     buf = NULL;
@@ -3256,47 +3492,235 @@ int vec0_get_vector_data(vec0_vtab *pVtab, i64 rowid, int vector_column_idx,
   rc = SQLITE_OK;
 
 cleanup:
-  sqlite3_reset(pVtab->stmtRowidsGetChunkPosition);
-  sqlite3_clear_bindings(pVtab->stmtRowidsGetChunkPosition);
-
+  sqlite3_blob_close(vectorBlob);
   return rc;
 }
 
-/**
- * @brief For the given rowid, found the chunk_id and chunk_offset for that row.
- *
- * @param p: vec0 table
- * @param rowid: rowid of row to lookup
- * @param chunk_id: Output chunk_id of the row, refs _chunks.rowid
- * @param chunk_offset: Output chunk_offset of the row
- * @return int: SQLITE_OK on success, error code on failure
- */
-int vec0_get_chunk_position(vec0_vtab *p, i64 rowid, i64 *chunk_id,
-                            i64 *chunk_offset) {
+int vec0_get_latest_chunk_rowid(vec0_vtab *p, i64 *chunk_rowid) {
   int rc;
-  sqlite3_bind_int64(p->stmtRowidsGetChunkPosition, 1, rowid);
+  const char * zSql;
+  // lazy initialize stmtLatestChunk when needed. May be cleared during xSync()
+  if(!p->stmtLatestChunk) {
+    zSql = sqlite3_mprintf("SELECT max(rowid) FROM " VEC0_SHADOW_CHUNKS_NAME,
+                           p->schemaName, p->tableName);
+    if (!zSql) {
+      rc = SQLITE_NOMEM;
+      goto cleanup;
+    }
+    rc = sqlite3_prepare_v2(p->db, zSql, -1, &p->stmtLatestChunk, 0);
+    sqlite3_free((void *)zSql);
+    if (rc != SQLITE_OK) {
+      // IMP: V21406_05476
+      vtab_set_error(&p->base, VEC_INTERAL_ERROR "could not initialize 'latest chunk' statement");
+      goto cleanup;
+    }
+  }
 
-  rc = sqlite3_step(p->stmtRowidsGetChunkPosition);
+  rc = sqlite3_step(p->stmtLatestChunk);
   if (rc != SQLITE_ROW) {
-    vtab_set_error(&p->base, "Could not find chunk position for %lld", rowid);
+    // IMP: V31559_15629
+    vtab_set_error(&p->base, VEC_INTERAL_ERROR "Could not find latest chunk");
+    rc = SQLITE_ERROR;
     goto cleanup;
   }
-  *chunk_id = sqlite3_column_int64(p->stmtRowidsGetChunkPosition, 1);
-  *chunk_offset = sqlite3_column_int64(p->stmtRowidsGetChunkPosition, 2);
-
-  rc = sqlite3_step(p->stmtRowidsGetChunkPosition);
+  *chunk_rowid = sqlite3_column_int64(p->stmtLatestChunk, 0);
+  rc = sqlite3_step(p->stmtLatestChunk);
   if (rc != SQLITE_DONE) {
-    vtab_set_error(&p->base, "Could not find chunk position for %lld", rowid);
+    vtab_set_error(&p->base,
+                   VEC_INTERAL_ERROR
+                   "unknown result code when closing out stmtLatestChunk. "
+                   "Please file an issue: " REPORT_URL,
+                   p->schemaName, p->shadowChunksName);
     goto cleanup;
   }
-
   rc = SQLITE_OK;
 
-cleanup:
-  sqlite3_reset(p->stmtRowidsGetChunkPosition);
-  sqlite3_clear_bindings(p->stmtRowidsGetChunkPosition);
+
+  cleanup:
+    if(p->stmtLatestChunk) {
+      sqlite3_reset(p->stmtLatestChunk);
+    }
+   return rc;
+}
+
+int vec0_rowids_insert_rowid(vec0_vtab *p, i64 rowid) {
+  int rc = SQLITE_OK;
+  int entered = 0;
+  UNUSED_PARAMETER(entered); // temporary
+  if(!p->stmtRowidsInsertRowid) {
+    const char * zSql = sqlite3_mprintf("INSERT INTO " VEC0_SHADOW_ROWIDS_NAME "(rowid)"
+                           "VALUES (?);",
+                           p->schemaName, p->tableName);
+    if (!zSql) {
+      rc = SQLITE_NOMEM;
+      goto cleanup;
+    }
+    rc = sqlite3_prepare_v2(p->db, zSql, -1, &p->stmtRowidsInsertRowid, 0);
+    sqlite3_free((void *)zSql);
+    if (rc != SQLITE_OK) {
+      vtab_set_error(&p->base, VEC_INTERAL_ERROR "could not initialize 'insert rowids' statement");
+      goto cleanup;
+    }
+  }
+
+
+  #ifdef SQLITE_THREADSAFE
+    if (sqlite3_mutex_enter) {
+      sqlite3_mutex_enter(sqlite3_db_mutex(p->db));
+      entered = 1;
+    }
+#endif
+    sqlite3_bind_int64(p->stmtRowidsInsertRowid, 1, rowid);
+    rc = sqlite3_step(p->stmtRowidsInsertRowid);
+
+    if (rc != SQLITE_DONE) {
+      if (sqlite3_extended_errcode(p->db) == SQLITE_CONSTRAINT_PRIMARYKEY) {
+        // IMP: V17090_01160
+        vtab_set_error(&p->base, "UNIQUE constraint failed on %s primary key",
+                       p->tableName);
+      } else {
+        // IMP: V04679_21517
+        vtab_set_error(
+            &p->base, "Error inserting rowid into rowids shadow table: %s",
+            sqlite3_errmsg(sqlite3_db_handle(p->stmtRowidsInsertId)));
+      }
+      rc = SQLITE_ERROR;
+      goto cleanup;
+    }
+
+
+    rc = SQLITE_OK;
+
+  cleanup:
+    if(p->stmtRowidsInsertRowid) {
+      sqlite3_reset(p->stmtRowidsInsertRowid);
+      sqlite3_clear_bindings(p->stmtRowidsInsertRowid);
+    }
+
+    #ifdef SQLITE_THREADSAFE
+    if (sqlite3_mutex_leave && entered) {
+      sqlite3_mutex_leave(sqlite3_db_mutex(p->db));
+    }
+    #endif
+    return rc;
+
+}
+
+int vec0_rowids_insert_id(vec0_vtab *p, sqlite3_value * idValue, i64 * rowid) {
+  int rc = SQLITE_OK;
+  int entered = 0;
+  UNUSED_PARAMETER(entered); // temporary
+  if(!p->stmtRowidsInsertId) {
+    const char * zSql = sqlite3_mprintf("INSERT INTO " VEC0_SHADOW_ROWIDS_NAME "(id)"
+                           "VALUES (?);",
+         p->schemaName, p->tableName);
+    if (!zSql) {
+      rc = SQLITE_NOMEM;
+      goto complete;
+    }
+    rc = sqlite3_prepare_v2(p->db, zSql, -1, &p->stmtRowidsInsertId, 0);
+    sqlite3_free((void *)zSql);
+    if (rc != SQLITE_OK) {
+      vtab_set_error(&p->base, VEC_INTERAL_ERROR
+                          "could not initialize 'insert rowids id' statement");
+      goto complete;
+    }
+  }
+
+  #ifdef SQLITE_THREADSAFE
+  if (sqlite3_mutex_enter) {
+    sqlite3_mutex_enter(sqlite3_db_mutex(p->db));
+    entered = 1;
+  }
+  #endif
+
+  if(idValue) {
+    sqlite3_bind_value(p->stmtRowidsInsertId, 1, idValue);
+  }
+  rc = sqlite3_step(p->stmtRowidsInsertId);
+
+  if (rc != SQLITE_DONE) {
+    if (sqlite3_extended_errcode(p->db) == SQLITE_CONSTRAINT_UNIQUE) {
+      // IMP: V20497_04568
+      vtab_set_error(&p->base, "UNIQUE constraint failed on %s primary key",
+                      p->tableName);
+    } else {
+      // IMP: V24016_08086
+      // IMP: V15177_32015
+      vtab_set_error(
+          &p->base, "Error inserting id into rowids shadow table: %s",
+          sqlite3_errmsg(sqlite3_db_handle(p->stmtRowidsInsertId)));
+    }
+    rc = SQLITE_ERROR;
+    goto complete;
+  }
+
+  *rowid = sqlite3_last_insert_rowid(p->db);
+  rc = SQLITE_OK;
+
+  complete:
+  if(p->stmtRowidsInsertId) {
+    sqlite3_reset(p->stmtRowidsInsertId);
+    sqlite3_clear_bindings(p->stmtRowidsInsertId);
+  }
+
+#ifdef SQLITE_THREADSAFE
+    if (sqlite3_mutex_leave && entered) {
+      sqlite3_mutex_leave(sqlite3_db_mutex(p->db));
+    }
+#endif
+    return rc;
+}
+
+int vec0_rowids_update_position(vec0_vtab * p, i64 rowid, i64 chunk_rowid, i64 chunk_offset) {
+  int rc = SQLITE_OK;
+
+  if(!p->stmtRowidsUpdatePosition) {
+const char * zSql = sqlite3_mprintf(" UPDATE " VEC0_SHADOW_ROWIDS_NAME
+                           " SET chunk_id = ?, chunk_offset = ?"
+                           " WHERE rowid = ?",
+                           p->schemaName, p->tableName);
+    if (!zSql) {
+      rc = SQLITE_NOMEM;
+      goto cleanup;
+    }
+    rc = sqlite3_prepare_v2(p->db, zSql, -1, &p->stmtRowidsUpdatePosition,
+                            0);
+    sqlite3_free((void *)zSql);
+    if (rc != SQLITE_OK) {
+      vtab_set_error(&p->base,
+          VEC_INTERAL_ERROR
+          "could not initialize 'update rowids position' statement");
+      goto cleanup;
+    }
+  }
+
+  sqlite3_bind_int64(p->stmtRowidsUpdatePosition, 1, chunk_rowid);
+  sqlite3_bind_int64(p->stmtRowidsUpdatePosition, 2, chunk_offset);
+  sqlite3_bind_int64(p->stmtRowidsUpdatePosition, 3, rowid);
+  rc = sqlite3_step(p->stmtRowidsUpdatePosition);
+  if (rc != SQLITE_DONE) {
+    // IMP: V21925_05995
+    vtab_set_error(&p->base,
+                   VEC_INTERAL_ERROR
+                   "could not update rowids position for rowid=%lld, "
+                   "chunk_rowid=%lld, chunk_offset=%lld",
+                   rowid, chunk_rowid, chunk_offset);
+    rc = SQLITE_ERROR;
+    goto cleanup;
+  }
+  rc = SQLITE_OK;
+
+  cleanup:
+  if(p->stmtRowidsUpdatePosition) {
+    sqlite3_reset(p->stmtRowidsUpdatePosition);
+    sqlite3_clear_bindings(p->stmtRowidsUpdatePosition);
+  }
 
   return rc;
+
+
+
 }
 
 /**
@@ -3716,112 +4140,6 @@ static int vec0_init(sqlite3 *db, void *pAux, int argc, const char *const *argv,
     rc = vec0_new_chunk(pNew, NULL);
     if (rc != SQLITE_OK) {
       *pzErr = sqlite3_mprintf("Could not create create an initial chunk");
-      goto error;
-    }
-  }
-
-  // init stmtLatestChunk
-  {
-    zSql = sqlite3_mprintf("SELECT max(rowid) FROM " VEC0_SHADOW_CHUNKS_NAME,
-                           pNew->schemaName, pNew->tableName);
-    if (!zSql) {
-      goto error;
-    }
-    rc = sqlite3_prepare_v2(pNew->db, zSql, -1, &pNew->stmtLatestChunk, 0);
-    sqlite3_free((void *)zSql);
-    if (rc != SQLITE_OK) {
-      // IMP: V21406_05476
-      *pzErr = sqlite3_mprintf(VEC_INTERAL_ERROR
-                               "could not initialize 'latest chunk' statement");
-      goto error;
-    }
-  }
-
-  // init stmtRowidsInsertRowid
-  {
-    zSql = sqlite3_mprintf("INSERT INTO " VEC0_SHADOW_ROWIDS_NAME "(rowid)"
-                           "VALUES (?);",
-                           pNew->schemaName, pNew->tableName);
-    if (!zSql) {
-      goto error;
-    }
-    rc =
-        sqlite3_prepare_v2(pNew->db, zSql, -1, &pNew->stmtRowidsInsertRowid, 0);
-    sqlite3_free((void *)zSql);
-    if (rc != SQLITE_OK) {
-      *pzErr = sqlite3_mprintf(
-          VEC_INTERAL_ERROR "could not initialize 'insert rowids' statement");
-      goto error;
-    }
-  }
-
-  // init stmtRowidsInsertId
-  {
-    zSql = sqlite3_mprintf("INSERT INTO " VEC0_SHADOW_ROWIDS_NAME "(id)"
-                           "VALUES (?);",
-                           pNew->schemaName, pNew->tableName);
-    if (!zSql) {
-      goto error;
-    }
-    rc = sqlite3_prepare_v2(pNew->db, zSql, -1, &pNew->stmtRowidsInsertId, 0);
-    sqlite3_free((void *)zSql);
-    if (rc != SQLITE_OK) {
-      *pzErr =
-          sqlite3_mprintf(VEC_INTERAL_ERROR
-                          "could not initialize 'insert rowids id' statement");
-      goto error;
-    }
-  }
-
-  // init stmtRowidsUpdatePosition
-  {
-    zSql = sqlite3_mprintf(" UPDATE " VEC0_SHADOW_ROWIDS_NAME
-                           " SET chunk_id = ?, chunk_offset = ?"
-                           " WHERE rowid = ?",
-                           pNew->schemaName, pNew->tableName);
-    if (!zSql) {
-      goto error;
-    }
-    rc = sqlite3_prepare_v2(pNew->db, zSql, -1, &pNew->stmtRowidsUpdatePosition,
-                            0);
-    sqlite3_free((void *)zSql);
-    if (rc != SQLITE_OK) {
-      *pzErr = sqlite3_mprintf(
-          VEC_INTERAL_ERROR
-          "could not initialize 'update rowids position' statement");
-      goto error;
-    }
-  }
-
-  // init stmtRowidsGetChunkPosition
-  {
-    zSql = sqlite3_mprintf("SELECT id, chunk_id, chunk_offset "
-                           "FROM " VEC0_SHADOW_ROWIDS_NAME " WHERE rowid = ?",
-                           pNew->schemaName, pNew->tableName);
-    if (!zSql) {
-      goto error;
-    }
-    rc = sqlite3_prepare_v2(pNew->db, zSql, -1,
-                            &pNew->stmtRowidsGetChunkPosition, 0);
-    sqlite3_free((void *)zSql);
-    if (rc != SQLITE_OK) {
-      *pzErr = sqlite3_mprintf(
-          VEC_INTERAL_ERROR
-          "could not initialize 'rowids get chunk position' statement");
-      goto error;
-    }
-  }
-
-  // init vectorBlobs[..]
-  for (int i = 0; i < pNew->numVectorColumns; i++) {
-    // there should always be a vector chunk with id=1
-    rc = sqlite3_blob_open(db, pNew->schemaName,
-                           pNew->shadowVectorChunksNames[i], "vectors", 1, 0,
-                           &pNew->vectorBlobs[i]);
-    if (rc != SQLITE_OK) {
-      *pzErr = sqlite3_mprintf(VEC_INTERAL_ERROR
-                               "could not initialize 'vector chunk' blob at %d",
-                               i);
       goto error;
     }
   }
@@ -4418,6 +4736,11 @@ int vec0Filter_knn_chunks_iter(vec0_vtab *p, sqlite3_stmt *stmtChunks,
                                          &vector_column->dimensions);
           break;
         }
+        case VEC0_DISTANCE_METRIC_L1: {
+          result = distance_l1_f32(base_i, (f32 *)queryVector,
+                                         &vector_column->dimensions);
+          break;
+        }
         case VEC0_DISTANCE_METRIC_COSINE: {
           result = distance_cosine_float(base_i, (f32 *)queryVector,
                                          &vector_column->dimensions);
@@ -4432,6 +4755,11 @@ int vec0Filter_knn_chunks_iter(vec0_vtab *p, sqlite3_stmt *stmtChunks,
         switch (vector_column->distance_metric) {
         case VEC0_DISTANCE_METRIC_L2: {
           result = distance_l2_sqr_int8(base_i, (i8 *)queryVector,
+                                        &vector_column->dimensions);
+          break;
+        }
+        case VEC0_DISTANCE_METRIC_L1: {
+          result = distance_l1_int8(base_i, (i8 *)queryVector,
                                         &vector_column->dimensions);
           break;
         }
@@ -5009,82 +5337,16 @@ int vec0Update_InsertRowidStep(vec0_vtab *p, sqlite3_value *idValue,
       return SQLITE_ERROR;
     }
 
-#ifdef SQLITE_THREADSAFE
-    if (sqlite3_mutex_enter) {
-      sqlite3_mutex_enter(sqlite3_db_mutex(p->db));
-    }
-#endif
-
-    sqlite3_bind_value(p->stmtRowidsInsertId, 1, idValue);
-    rc = sqlite3_step(p->stmtRowidsInsertId);
-
-    if (rc != SQLITE_DONE) {
-      if (sqlite3_extended_errcode(p->db) == SQLITE_CONSTRAINT_UNIQUE) {
-        // IMP: V20497_04568
-        vtab_set_error(&p->base, "UNIQUE constraint failed on %s primary key",
-                       p->tableName);
-      } else {
-        // IMP: V24016_08086
-        vtab_set_error(
-            &p->base, "Error inserting into rowid shadow table: %s",
-            sqlite3_errmsg(sqlite3_db_handle(p->stmtRowidsInsertId)));
-      }
-      rc = SQLITE_ERROR;
-      goto complete;
-    }
-
-    *rowid = sqlite3_last_insert_rowid(p->db);
-    rc = SQLITE_OK;
-
-  complete:
-    sqlite3_reset(p->stmtRowidsInsertId);
-    sqlite3_clear_bindings(p->stmtRowidsInsertId);
-#ifdef SQLITE_THREADSAFE
-    if (sqlite3_mutex_leave) {
-      sqlite3_mutex_leave(sqlite3_db_mutex(p->db));
-    }
-#endif
-    return rc;
+    return vec0_rowids_insert_id(p, idValue, rowid);
   }
 
   // Option 1: User supplied a i64 rowid
   if (sqlite3_value_type(idValue) == SQLITE_INTEGER) {
     i64 suppliedRowid = sqlite3_value_int64(idValue);
-
-#ifdef SQLITE_THREADSAFE
-    if (sqlite3_mutex_enter) {
-      sqlite3_mutex_enter(sqlite3_db_mutex(p->db));
+    rc = vec0_rowids_insert_rowid(p, suppliedRowid);
+    if(rc == SQLITE_OK) {
+      *rowid = suppliedRowid;
     }
-#endif
-    sqlite3_bind_int64(p->stmtRowidsInsertRowid, 1, suppliedRowid);
-    rc = sqlite3_step(p->stmtRowidsInsertRowid);
-
-    if (rc != SQLITE_DONE) {
-      if (sqlite3_extended_errcode(p->db) == SQLITE_CONSTRAINT_PRIMARYKEY) {
-        // IMP: V17090_01160
-        vtab_set_error(&p->base, "UNIQUE constraint failed on %s primary key",
-                       p->tableName);
-      } else {
-        // IMP: V04679_21517
-        vtab_set_error(
-            &p->base, "Error inserting into rowid shadow table: %s",
-            sqlite3_errmsg(sqlite3_db_handle(p->stmtRowidsInsertId)));
-      }
-      rc = SQLITE_ERROR;
-      goto complete2;
-    }
-
-    *rowid = suppliedRowid;
-    rc = SQLITE_OK;
-
-  complete2:
-    sqlite3_reset(p->stmtRowidsInsertRowid);
-    sqlite3_clear_bindings(p->stmtRowidsInsertRowid);
-#ifdef SQLITE_THREADSAFE
-    if (sqlite3_mutex_leave) {
-      sqlite3_mutex_leave(sqlite3_db_mutex(p->db));
-    }
-#endif
     return rc;
   }
 
@@ -5097,34 +5359,8 @@ int vec0Update_InsertRowidStep(vec0_vtab *p, sqlite3_value *idValue,
                    p->tableName);
     return SQLITE_ERROR;
   }
-#ifdef SQLITE_THREADSAFE
-  if (sqlite3_mutex_enter) {
-    sqlite3_mutex_enter(sqlite3_db_mutex(p->db));
-  }
-#endif
-
-  // no need to bind a value to ?1 here: needs to be NULL
-  // so we can get the next autoincremented rowid value.
-  rc = sqlite3_step(p->stmtRowidsInsertId);
-  if (rc != SQLITE_DONE) {
-    // IMP: V15177_32015
-    vtab_set_error(&p->base, "Error inserting into rowid shadow table: %s",
-                   sqlite3_errmsg(sqlite3_db_handle(p->stmtRowidsInsertId)));
-    rc = SQLITE_ERROR;
-    goto complete3;
-  }
-  *rowid = sqlite3_last_insert_rowid(p->db);
-  rc = SQLITE_OK;
-
-complete3:
-  sqlite3_reset(p->stmtRowidsInsertId);
-  sqlite3_clear_bindings(p->stmtRowidsInsertId);
-#ifdef SQLITE_THREADSAFE
-  if (sqlite3_mutex_leave) {
-    sqlite3_mutex_leave(sqlite3_db_mutex(p->db));
-  }
-#endif
-  return rc;
+  // NULL to get next auto-incremented value
+  return vec0_rowids_insert_id(p, NULL, rowid);
 }
 
 /**
@@ -5154,23 +5390,11 @@ int vec0Update_InsertNextAvailableStep(
   i64 validitySize;
   *chunk_offset = -1;
 
-  rc = sqlite3_step(p->stmtLatestChunk);
-  if (rc != SQLITE_ROW) {
-    // IMP: V31559_15629
-    vtab_set_error(&p->base, VEC_INTERAL_ERROR "Could not find latest chunk");
-    rc = SQLITE_ERROR;
+  rc = vec0_get_latest_chunk_rowid(p, chunk_rowid);
+  if(rc != SQLITE_OK) {
     goto cleanup;
   }
-  *chunk_rowid = sqlite3_column_int64(p->stmtLatestChunk, 0);
-  rc = sqlite3_step(p->stmtLatestChunk);
-  if (rc != SQLITE_DONE) {
-    vtab_set_error(&p->base,
-                   VEC_INTERAL_ERROR
-                   "unknown result code when closing out stmtLatestChunk. "
-                   "Please file an issue: " REPORT_URL,
-                   p->schemaName, p->shadowChunksName);
-    goto cleanup;
-  }
+
 
   rc = sqlite3_blob_open(p->db, p->schemaName, p->shadowChunksName, "validity",
                          *chunk_rowid, 1, blobChunksValidity);
@@ -5284,7 +5508,6 @@ done:
   rc = SQLITE_OK;
 
 cleanup:
-  sqlite3_reset(p->stmtLatestChunk);
   return rc;
 }
 
@@ -5344,6 +5567,8 @@ int vec0Update_InsertWriteFinalStep(vec0_vtab *p, i64 chunk_rowid,
                                     sqlite3_blob *blobChunksValidity,
                                     const unsigned char *bufferChunksValidity) {
   int rc;
+  sqlite3_blob *blobChunksRowids = NULL;
+
 
   // mark the validity bit for this row in the chunk's validity bitmap
   // Get the byte offset of the bitmap
@@ -5400,7 +5625,6 @@ int vec0Update_InsertWriteFinalStep(vec0_vtab *p, i64 chunk_rowid,
     sqlite3_blob_close(blobVectors);
   }
 
-  sqlite3_blob *blobChunksRowids = NULL;
 
   // write the new rowid to the rowids column of the _chunks table
   rc = sqlite3_blob_open(p->db, p->schemaName, p->shadowChunksName, "rowids",
@@ -5422,7 +5646,6 @@ int vec0Update_InsertWriteFinalStep(vec0_vtab *p, i64 chunk_rowid,
         "rowids blob size mismatch on %s.%s.%lld. Expected %lld, actual %lld",
         p->schemaName, p->shadowChunksName, chunk_rowid, expected, actual);
     rc = SQLITE_ERROR;
-    sqlite3_blob_close(blobChunksRowids);
     goto cleanup;
   }
   rc = sqlite3_blob_write(blobChunksRowids, &rowid, sizeof(i64),
@@ -5432,35 +5655,16 @@ int vec0Update_InsertWriteFinalStep(vec0_vtab *p, i64 chunk_rowid,
         &p->base, VEC_INTERAL_ERROR "could not write rowids blob on %s.%s.%lld",
         p->schemaName, p->shadowChunksName, chunk_rowid);
     rc = SQLITE_ERROR;
-    sqlite3_blob_close(blobChunksRowids);
     goto cleanup;
   }
-  sqlite3_blob_close(blobChunksRowids);
 
   // Now with all the vectors inserted, go back and update the _rowids table
   // with the new chunk_rowid/chunk_offset values
+  rc = vec0_rowids_update_position(p, rowid, chunk_rowid, chunk_offset);
 
-  sqlite3_bind_int64(p->stmtRowidsUpdatePosition, 1, chunk_rowid);
-  sqlite3_bind_int64(p->stmtRowidsUpdatePosition, 2, chunk_offset);
-  sqlite3_bind_int64(p->stmtRowidsUpdatePosition, 3, rowid);
-  rc = sqlite3_step(p->stmtRowidsUpdatePosition);
-  if (rc != SQLITE_DONE) {
-    // IMP: V21925_05995
-    vtab_set_error(&p->base,
-                   VEC_INTERAL_ERROR
-                   "could not update rowids position for rowid=%lld, "
-                   "chunk_rowid=%lld, chunk_offset=%lld",
-                   rowid, chunk_rowid, chunk_offset);
-    rc = SQLITE_ERROR;
-    goto cleanup;
-  }
-
-  rc = SQLITE_OK;
-
-cleanup:
-  sqlite3_reset(p->stmtRowidsUpdatePosition);
-  sqlite3_clear_bindings(p->stmtRowidsUpdatePosition);
-  return rc;
+  cleanup:
+    sqlite3_blob_close(blobChunksRowids);
+    return rc;
 }
 
 /**
@@ -5699,7 +5903,7 @@ int vec0Update_Delete(sqlite3_vtab *pVTab, sqlite_int64 rowid) {
   // 5. Delete value in _rowids table
 
   // 1. get chunk_id and chunk_offset from _rowids
-  rc = vec0_get_chunk_position(p, rowid, &chunk_id, &chunk_offset);
+  rc = vec0_get_chunk_position(p, rowid, NULL, &chunk_id, &chunk_offset);
   if (rc != SQLITE_OK) {
     return rc;
   }
@@ -5812,7 +6016,7 @@ int vec0Update_UpdateOnRowid(sqlite3_vtab *pVTab, int argc,
   i64 rowid = sqlite3_value_int64(argv[0]);
 
   // 1. get chunk_id and chunk_offset from _rowids
-  rc = vec0_get_chunk_position(p, rowid, &chunk_id, &chunk_offset);
+  rc = vec0_get_chunk_position(p, rowid, NULL, &chunk_id, &chunk_offset);
   if (rc != SQLITE_OK) {
     return rc;
   }
@@ -5882,6 +6086,44 @@ static int vec0ShadowName(const char *zName) {
   return 0;
 }
 
+static int vec0Begin(sqlite3_vtab *pVTab) {
+  UNUSED_PARAMETER(pVTab);
+  return SQLITE_OK;
+}
+static int vec0Sync(sqlite3_vtab *pVTab) {
+  UNUSED_PARAMETER(pVTab);
+  vec0_vtab *p = (vec0_vtab *)pVTab;
+  if(p->stmtLatestChunk) {
+    sqlite3_finalize(p->stmtLatestChunk);
+    p->stmtLatestChunk = NULL;
+  }
+  if(p->stmtRowidsInsertRowid) {
+    sqlite3_finalize(p->stmtRowidsInsertRowid);
+    p->stmtRowidsInsertRowid = NULL;
+  }
+  if(p->stmtRowidsInsertId) {
+    sqlite3_finalize(p->stmtRowidsInsertId);
+    p->stmtRowidsInsertId = NULL;
+  }
+  if(p->stmtRowidsUpdatePosition) {
+    sqlite3_finalize(p->stmtRowidsUpdatePosition);
+    p->stmtRowidsUpdatePosition = NULL;
+  }
+  if(p->stmtRowidsGetChunkPosition) {
+    sqlite3_finalize(p->stmtRowidsGetChunkPosition);
+    p->stmtRowidsGetChunkPosition = NULL;
+  }
+  return SQLITE_OK;
+}
+static int vec0Commit(sqlite3_vtab *pVTab) {
+  UNUSED_PARAMETER(pVTab);
+  return SQLITE_OK;
+}
+static int vec0Rollback(sqlite3_vtab *pVTab) {
+  UNUSED_PARAMETER(pVTab);
+  return SQLITE_OK;
+}
+
 static sqlite3_module vec0Module = {
     /* iVersion      */ 3,
     /* xCreate       */ vec0Create,
@@ -5897,18 +6139,18 @@ static sqlite3_module vec0Module = {
     /* xColumn       */ vec0Column,
     /* xRowid        */ vec0Rowid,
     /* xUpdate       */ vec0Update,
-    /* xBegin        */ 0,
-    /* xSync         */ 0,
-    /* xCommit       */ 0,
-    /* xRollback     */ 0,
+    /* xBegin        */ vec0Begin,
+    /* xSync         */ vec0Sync,
+    /* xCommit       */ vec0Commit,
+    /* xRollback     */ vec0Rollback,
     /* xFindFunction */ 0,
-    /* xRename       */ 0, // TODO
+    /* xRename       */ 0, // https://github.com/asg017/sqlite-vec/issues/43
     /* xSavepoint    */ 0,
     /* xRelease      */ 0,
     /* xRollbackTo   */ 0,
     /* xShadowName   */ vec0ShadowName,
 #if SQLITE_VERSION_NUMBER >= 3044000
-    /* xIntegrity    */ 0, // TODO
+    /* xIntegrity    */ 0, // https://github.com/asg017/sqlite-vec/issues/44
 #endif
 };
 #pragma endregion
@@ -6658,9 +6900,11 @@ __declspec(dllexport)
     //{"vec_version",         _static_text_func,    0, DEFAULT_FLAGS,                                          (void *) SQLITE_VEC_VERSION },
     //{"vec_debug",           _static_text_func,    0, DEFAULT_FLAGS,                                          (void *) SQLITE_VEC_DEBUG_STRING },
     {"vec_distance_l2",     vec_distance_l2,      2, DEFAULT_FLAGS | SQLITE_SUBTYPE,                         },
+    {"vec_distance_l1",     vec_distance_l1,      2, DEFAULT_FLAGS | SQLITE_SUBTYPE,                         },
     {"vec_distance_hamming",vec_distance_hamming, 2, DEFAULT_FLAGS | SQLITE_SUBTYPE,                         },
     {"vec_distance_cosine", vec_distance_cosine,  2, DEFAULT_FLAGS | SQLITE_SUBTYPE,                         },
     {"vec_length",          vec_length,           1, DEFAULT_FLAGS | SQLITE_SUBTYPE,                         },
+    {"vec_type",           vec_type,           1, DEFAULT_FLAGS,                         },
     {"vec_to_json",         vec_to_json,          1, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
     {"vec_add",             vec_add,              2, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
     {"vec_sub",             vec_sub,              2, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
@@ -6669,8 +6913,7 @@ __declspec(dllexport)
     {"vec_f32",             vec_f32,              1, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
     {"vec_bit",             vec_bit,              1, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
     {"vec_int8",            vec_int8,             1, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
-    {"vec_quantize_i8",     vec_quantize_i8,      2, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
-    {"vec_quantize_i8",     vec_quantize_i8,      3, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
+    {"vec_quantize_int8",     vec_quantize_int8,      2, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
     {"vec_quantize_binary", vec_quantize_binary,  1, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE, },
     {"vec_static_blob_from_raw", vec_static_blob_from_raw,  4, DEFAULT_FLAGS | SQLITE_SUBTYPE | SQLITE_RESULT_SUBTYPE },
       // clang-format on
