@@ -1,4 +1,4 @@
-# sqlite-vec-bindings-go
+# sqlite-vec-go-bindings
 
 Go bindings for [`sqlite-vec`](https://github.com/asg017/sqlite-vec) project. In a separate repo to keep the original repo from getting too large.
 
