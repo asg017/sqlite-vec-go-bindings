@@ -3,9 +3,19 @@
 
 #include "sqlite3ext.h"
 
-#define SQLITE_VEC_VERSION "v0.1.1"
-#define SQLITE_VEC_DATE "2024-08-06T00:11:41Z+0000"
-#define SQLITE_VEC_SOURCE "ad11d46221470449f91c4b51a4e44b4bafe4569b"
+#ifdef SQLITE_VEC_STATIC
+  #define SQLITE_VEC_API
+#else
+  #ifdef _WIN32
+    #define SQLITE_VEC_API __declspec(dllexport)
+  #else
+    #define SQLITE_VEC_API
+  #endif
+#endif
+
+#define SQLITE_VEC_VERSION "v0.1.2-alpha.1"
+#define SQLITE_VEC_DATE "2024-08-09T18:10:42Z+0000"
+#define SQLITE_VEC_SOURCE "60463e08ea3889260ce0d055324de3ce8afa6517"
 
 #ifdef __cplusplus
 extern "C" {

@@ -505,8 +505,20 @@ static f32 distance_hamming_u8(u8 *a, u8 *b, size_t n) {
 }
 
 #ifdef _MSC_VER
+#if !defined(__clang__) &&                                \
+    (defined(_M_ARM) || defined(_M_ARM64))
+// From https://github.com/ngtcp2/ngtcp2/blob/b64f1e77b5e0d880b93d31f474147fae4a1d17cc/lib/ngtcp2_ringbuf.c, line 34-43
+static unsigned int __builtin_popcountl(unsigned int x) {
+  unsigned int c = 0;
+  for (; x; ++c) {
+    x &= x - 1;
+  }
+  return c;
+}
+#else
 #include <intrin.h>
 #define __builtin_popcountl __popcnt64
+#endif
 #endif
 
 static f32 distance_hamming_u64(u64 *a, u64 *b, size_t n) {
@@ -536,7 +548,7 @@ static f32 distance_hamming(const void *a, const void *b, const void *d) {
 
 // from SQLite source:
 // https://github.com/sqlite/sqlite/blob/a509a90958ddb234d1785ed7801880ccb18b497e/src/json.c#L153
-static const char jsonIsSpaceX[] = {
+static const char vecJsonIsSpaceX[] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -551,7 +563,8 @@ static const char jsonIsSpaceX[] = {
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 };
-#define jsonIsspace(x) (jsonIsSpaceX[(unsigned char)x])
+
+#define vecJsonIsspace(x) (vecJsonIsSpaceX[(unsigned char)x])
 
 typedef void (*vector_cleanup)(void *p);
 
@@ -696,7 +709,7 @@ static int fvec_from_value(sqlite3_value *value, f32 **vector,
 
     // advance leading whitespace to first '['
     while (i < source_len) {
-      if (jsonIsspace(source[i])) {
+      if (vecJsonIsspace(source[i])) {
         i++;
         continue;
       }
@@ -746,7 +759,7 @@ static int fvec_from_value(sqlite3_value *value, f32 **vector,
 
       offset += (endptr - ptr);
       while (offset < source_len) {
-        if (jsonIsspace(source[offset])) {
+        if (vecJsonIsspace(source[offset])) {
           offset++;
           continue;
         }
@@ -834,7 +847,7 @@ static int int8_vec_from_value(sqlite3_value *value, i8 **vector,
 
     // advance leading whitespace to first '['
     while (i < source_len) {
-      if (jsonIsspace(source[i])) {
+      if (vecJsonIsspace(source[i])) {
         i++;
         continue;
       }
@@ -889,7 +902,7 @@ static int int8_vec_from_value(sqlite3_value *value, i8 **vector,
 
       offset += (endptr - ptr);
       while (offset < source_len) {
-        if (jsonIsspace(source[offset])) {
+        if (vecJsonIsspace(source[offset])) {
           offset++;
           continue;
         }
@@ -1292,6 +1305,7 @@ char *vec_type_name(enum VectorElementType elementType) {
   case SQLITE_VEC_ELEMENT_TYPE_BIT:
     return "bit";
   }
+  return "";
 }
 
 static void vec_type(sqlite3_context *context, int argc, sqlite3_value **argv) {
@@ -2003,6 +2017,7 @@ size_t vector_byte_size(enum VectorElementType element_type,
   case SQLITE_VEC_ELEMENT_TYPE_BIT:
     return dimensions / CHAR_BIT;
   }
+  return 0;
 }
 
 size_t vector_column_byte_size(struct VectorColumnDefinition column) {
@@ -3060,6 +3075,7 @@ static int vec_npy_eachColumn(sqlite3_vtab_cursor *cur,
   case VEC_NPY_EACH_INPUT_FILE:
     return vec_npy_eachColumnFile(pCur, context, i);
   }
+  return SQLITE_ERROR;
 }
 
 static sqlite3_module vec_npy_eachModule = {
@@ -3938,7 +3954,7 @@ static int vec0_init(sqlite3 *db, void *pAux, int argc, const char *const *argv,
   // track if a "primary key" column is defined
   char *pkColumnName = NULL;
   int pkColumnNameLength;
-  int pkColumnType;
+  int pkColumnType = SQLITE_INTEGER;
 
   for (int i = 3; i < argc; i++) {
     struct VectorColumnDefinition c;
@@ -5187,6 +5203,7 @@ static int vec0Rowid(sqlite3_vtab_cursor *cur, sqlite_int64 *pRowid) {
     return SQLITE_ERROR;
   }
   }
+  return SQLITE_ERROR;
 }
 
 static int vec0Next(sqlite3_vtab_cursor *cur) {
@@ -5249,6 +5266,7 @@ static int vec0Eof(sqlite3_vtab_cursor *cur) {
     return pCur->point_data->done;
   }
   }
+  return 1;
 }
 
 static int vec0Column_fullscan(vec0_vtab *pVtab, vec0_cursor *pCur,
@@ -6787,6 +6805,7 @@ static int vec_static_blob_entriesRowid(sqlite3_vtab_cursor *cur,
     return SQLITE_OK;
   }
   }
+  return SQLITE_ERROR;
 
 }
 
@@ -6802,6 +6821,7 @@ static int vec_static_blob_entriesNext(sqlite3_vtab_cursor *cur) {
     return SQLITE_OK;
   }
   }
+  return SQLITE_ERROR;
 }
 
 static int vec_static_blob_entriesEof(sqlite3_vtab_cursor *cur) {
@@ -6816,6 +6836,7 @@ static int vec_static_blob_entriesEof(sqlite3_vtab_cursor *cur) {
     return pCur->knn_data->current_idx >= pCur->knn_data->k;
   }
   }
+  return SQLITE_ERROR;
 }
 
 static int vec_static_blob_entriesColumn(sqlite3_vtab_cursor *cur,
@@ -6853,6 +6874,7 @@ static int vec_static_blob_entriesColumn(sqlite3_vtab_cursor *cur,
     return SQLITE_OK;
   }
   }
+  return SQLITE_ERROR;
 }
 
 static sqlite3_module vec_static_blob_entriesModule = {
@@ -6907,10 +6929,7 @@ static sqlite3_module vec_static_blob_entriesModule = {
   "Build flags: " SQLITE_VEC_DEBUG_BUILD
 
 
-#ifdef _WIN32
-__declspec(dllexport)
-#endif
-    int sqlite3_vec_init(sqlite3 *db, char **pzErrMsg,
+SQLITE_VEC_API int sqlite3_vec_init(sqlite3 *db, char **pzErrMsg,
                          const sqlite3_api_routines *pApi) {
   SQLITE_EXTENSION_INIT2(pApi);
   int rc = SQLITE_OK;
@@ -6994,10 +7013,7 @@ __declspec(dllexport)
 }
 
 #ifndef SQLITE_VEC_OMIT_FS
-#ifdef _WIN32
-__declspec(dllexport)
-#endif
-    int sqlite3_vec_fs_read_init(sqlite3 *db, char **pzErrMsg,
+SQLITE_VEC_API int sqlite3_vec_fs_read_init(sqlite3 *db, char **pzErrMsg,
                                  const sqlite3_api_routines *pApi) {
   UNUSED_PARAMETER(pzErrMsg);
   SQLITE_EXTENSION_INIT2(pApi);
@@ -7009,10 +7025,7 @@ __declspec(dllexport)
 #endif
 
 
-#ifdef _WIN32
-__declspec(dllexport)
-#endif
-    int sqlite3_vec_static_blobs_init(sqlite3 *db, char **pzErrMsg,
+SQLITE_VEC_API int sqlite3_vec_static_blobs_init(sqlite3 *db, char **pzErrMsg,
                                  const sqlite3_api_routines *pApi) {
   UNUSED_PARAMETER(pzErrMsg);
   SQLITE_EXTENSION_INIT2(pApi);
