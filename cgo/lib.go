@@ -1,6 +1,7 @@
 package vec
 
 // #cgo CFLAGS: -DSQLITE_CORE
+// #cgo linux LDFLAGS: -lm
 // #include "sqlite-vec.h"
 //
 import "C"
