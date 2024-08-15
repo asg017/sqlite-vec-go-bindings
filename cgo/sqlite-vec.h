@@ -13,9 +13,9 @@
   #endif
 #endif
 
-#define SQLITE_VEC_VERSION "v0.1.2-alpha.6"
-#define SQLITE_VEC_DATE "2024-08-12T22:40:58Z+0000"
-#define SQLITE_VEC_SOURCE "8556b08a9bdc49c8215acb599a5a4c2d907183d1"
+#define SQLITE_VEC_VERSION "v0.1.2-alpha.7"
+#define SQLITE_VEC_DATE "2024-08-15T02:16:36Z+0000"
+#define SQLITE_VEC_SOURCE "b427669098d039c65ecab9f1d313868d72dbe3e6"
 
 #ifdef __cplusplus
 extern "C" {
