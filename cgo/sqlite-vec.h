@@ -1,7 +1,11 @@
 #ifndef SQLITE_VEC_H
 #define SQLITE_VEC_H
 
+#ifndef SQLITE_CORE
 #include "sqlite3ext.h"
+#else
+#include "sqlite3.h"
+#endif
 
 #ifdef SQLITE_VEC_STATIC
   #define SQLITE_VEC_API
@@ -13,9 +17,9 @@
   #endif
 #endif
 
-#define SQLITE_VEC_VERSION "v0.1.2"
-#define SQLITE_VEC_DATE "2024-09-13T16:13:57Z+0000"
-#define SQLITE_VEC_SOURCE "2998a24462b125cb09cd466d54b34f4eabf6f075"
+#define SQLITE_VEC_VERSION "v0.1.3-alpha.1"
+#define SQLITE_VEC_DATE "2024-09-13T20:01:48Z+0000"
+#define SQLITE_VEC_SOURCE "4fbdd9ab2d7306fc6b5ea6b2052c396c3c469a85"
 
 #ifdef __cplusplus
 extern "C" {
