@@ -65,6 +65,7 @@ import (
 )
 
 func main() {
+	// changing :memory: to an absolute path will open or create that file, it works with these extensions
 	db, err := sqlite3.Open(":memory:")
 	if err != nil {
 		log.Fatal(err)
